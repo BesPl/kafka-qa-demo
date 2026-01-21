@@ -1,9 +1,16 @@
 # Виртуальное окружение
 .venv/
-__pycache__/
+venv/
+ENV/
 
 # PyCharm
 .idea/
+*.iml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 
 # Docker
 .dockerenv
@@ -11,10 +18,22 @@ docker-compose.override.yml
 
 # Локальные настройки
 .env
+.env.local
+.env.*
 
-# Бинарники
-*.pyc
+# Логи
 *.log
+logs/
 
 # Тестовые данные
 test_data/
+
+# Бинарники
+*.so
+*.dll
+*.exe
+
+# IDE
+.vscode/
+*.swp
+*.swo
