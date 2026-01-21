@@ -1,0 +1,20 @@
+# Виртуальное окружение
+.venv/
+__pycache__/
+
+# PyCharm
+.idea/
+
+# Docker
+.dockerenv
+docker-compose.override.yml
+
+# Локальные настройки
+.env
+
+# Бинарники
+*.pyc
+*.log
+
+# Тестовые данные
+test_data/
