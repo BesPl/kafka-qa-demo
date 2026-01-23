@@ -25,4 +25,25 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
 
-  # Ваш сервис будет собираться отдельно через Dockerfile
+  # Сервис продюсера
+  producer:
+    build: .
+    environment:
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - MAIN_TOPIC=orders.process
+      - MODE=producer
+    depends_on:
+      - kafka
+    command: ["python", "producer_consumer.py"]
+
+  # Сервис консьюмера
+  consumer:
+    build: .
+    environment:
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - MAIN_TOPIC=orders.process
+      - CONSUMER_GROUP=order-processing-group
+      - MODE=consumer
+    depends_on:
+      - kafka
+    command: ["python", "producer_consumer.py"]
