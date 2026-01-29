@@ -3,7 +3,8 @@ from kafka import KafkaConsumer
 import json
 from collections import defaultdict
 
-BOOTSTRAP_SERVERS = 'localhost:9092'
+from os import getenv
+BOOTSTRAP_SERVERS = getenv('KAFKA_BOOTSTRAP', 'kafka:9092')
 TOPIC = 'orders.process'
 
 consumer = KafkaConsumer(

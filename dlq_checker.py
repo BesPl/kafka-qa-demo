@@ -2,7 +2,8 @@
 from kafka import KafkaConsumer
 import json
 
-BOOTSTRAP_SERVERS = 'localhost:9092'
+from os import getenv
+BOOTSTRAP_SERVERS = getenv('KAFKA_BOOTSTRAP', 'kafka:9092')
 DLQ_TOPIC = 'orders.process.dlq'
 
 consumer = KafkaConsumer(
@@ -28,7 +29,7 @@ for message in consumer:
     print(f"\n❌ Ошибка #{errors_found}:")
     print(f"   Order ID: {order_id}")
     print(f"   Причина: {error_msg}")
-    print(f"   Сообщение: {original}")
+    print(f"   Сообщение: {str(original)[:200]}...")  # Обрезаем длинный вывод
 
 consumer.close()
 

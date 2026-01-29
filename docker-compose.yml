@@ -14,7 +14,7 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://host.docker.internal:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
   kafka-ui:
@@ -25,30 +25,25 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
 
-  # Сервис продюсера
+  # Сервисы
   producer:
     build: .
     environment:
       - KAFKA_BOOTSTRAP=kafka:9092
-      - MAIN_TOPIC=orders.process
-      - MODE=producer
+      - MODE=producer  # ← Явно
     depends_on:
       - kafka
     command: ["python", "producer_consumer.py"]
 
-  # Сервис консьюмера
   consumer:
     build: .
     environment:
       - KAFKA_BOOTSTRAP=kafka:9092
-      - MAIN_TOPIC=orders.process
-      - CONSUMER_GROUP=order-processing-group
-      - MODE=consumer
+      - MODE=consumer  # ← ЭТО ОБЯЗАТЕЛЬНО!
     depends_on:
       - kafka
     command: ["python", "producer_consumer.py"]
 
-  # Сервис тестового продюсера - разные сценарии
   test-producer:
     build: .
     environment:
@@ -57,7 +52,6 @@ services:
       - kafka
     command: ["python", "test_producer.py"]
 
-  # Сервис анализа партиций
   partition-analyzer:
     build: .
     environment:
@@ -66,7 +60,6 @@ services:
       - kafka
     command: ["python", "partition_analyzer.py"]
 
-  # Сервис проверки DLQ
   dlq-checker:
     build: .
     environment:

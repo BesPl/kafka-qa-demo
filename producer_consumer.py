@@ -7,7 +7,7 @@ from loguru import logger
 import os
 
 # Чтение конфигурации
-BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP', 'localhost:9092')
+BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP', 'kafka:9092')
 MAIN_TOPIC = os.getenv('MAIN_TOPIC', 'orders.process')
 DLQ_TOPIC = f"{MAIN_TOPIC}.dlq"
 CONSUMER_GROUP = os.getenv('CONSUMER_GROUP', 'order-processing-group')
@@ -30,15 +30,24 @@ if MODE == 'producer':
 
     # Отправка тестовых сообщений (включая ошибки)
     test_orders = [
+        # Стандартные сообщения
         {"order_id": "ORD-1001", "customer_id": "CUST-001", "amount": 99.99},
         {"order_id": "ORD-1002", "customer_id": "CUST-002", "amount": 149.50},
         {"order_id": "ORD-1003", "customer_id": "CUST-001", "amount": 75.25},  # Тот же customer
         {"order_id": "ORD-1004", "customer_id": "CUST-003", "amount": -10.00},  # Ошибка: отрицательная сумма
         {"order_id": "ORD-1005", "customer_id": "CUST-004", "amount": 200.00},
+
         # Тест ошибок:
         {"order_id": "ORD-1006", "customer_id": "CUST-005"},  # Ошибка: нет amount
         {"order_id": "ORD-1007", "amount": 50.00},  # Ошибка: нет customer_id
         {"customer_id": "CUST-006", "amount": 60.00},  # Ошибка: нет order_id
+
+        # Новые тестовые сообщения:
+        {"order_id": "ORD-1008", "customer_id": "CUST-007", "amount": 0.00},  # Ошибка: amount = 0
+        {"order_id": "ORD-1009", "customer_id": "CUST-008", "amount": 100.00},  # Точная граница (не идёт в payment)
+        {"order_id": "ORD-1010", "customer_id": "CUST-009", "amount": 100.01},  # Точная граница (идёт в payment)
+        {"order_id": "ORD-1011", "customer_id": "CUST-010", "amount": "invalid"},  # Ошибка: не число
+        {"order_id": "ORD-1012", "customer_id": "CUST-011", "amount": 300.00},  # Проверка: идёт в payment
     ]
 
     for order in test_orders:
@@ -103,6 +112,7 @@ elif MODE == 'consumer':
         if missing_fields:
             return False, f"Missing required fields: {missing_fields}"
 
+        # Проверка типа amount
         if not isinstance(message_dict['amount'], (int, float)):
             return False, "Amount must be a number"
 
@@ -157,7 +167,7 @@ elif MODE == 'consumer':
 
 
     def send_to_dlq(original_message_bytes, error):
-        """Отправка в DLQ"""
+        """Отправка в DLQ — исправленная версия"""
         try:
             original_dict = safe_json_decode(original_message_bytes)
 
@@ -170,18 +180,18 @@ elif MODE == 'consumer':
                 "original_message": original_dict,
                 "error": str(error),
                 "timestamp": int(time.time()),
-                "retry_count": 0,
-                "source_partition": getattr(dlq_message, 'partition', 'unknown'),  # Если есть
-                "source_offset": getattr(dlq_message, 'offset', 'unknown')  # Если есть
+                "correlation_id": str(uuid.uuid4()),  # Уникальный ID для трассировки
+                "retry_count": 0
+                # Убрали неправильные обращения к dlq_message
             }
 
             dlq_producer.send(DLQ_TOPIC, value=dlq_message)
             dlq_producer.flush()
-            logger.warning(f"⚠️ Message sent to DLQ: {DLQ_TOPIC}")
+            logger.warning(f"✅ Message sent to DLQ: {DLQ_TOPIC} | Error: {error}")
             dlq_producer.close()
 
         except Exception as dlq_error:
-            logger.critical(f"🔥 Failed to send to DLQ: {dlq_error}")
+            logger.critical(f"🔥 FAILED to send to DLQ: {dlq_error} | Original error: {error}")
 
 
     logger.info("🔄 Starting consumer loop...")
