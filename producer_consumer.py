@@ -28,35 +28,40 @@ if MODE == 'producer':
         retry_backoff_ms=1000
     )
 
-    # Отправка тестовых сообщений
+    # Отправка тестовых сообщений (включая ошибки)
     test_orders = [
         {"order_id": "ORD-1001", "customer_id": "CUST-001", "amount": 99.99},
         {"order_id": "ORD-1002", "customer_id": "CUST-002", "amount": 149.50},
         {"order_id": "ORD-1003", "customer_id": "CUST-001", "amount": 75.25},  # Тот же customer
-        {"order_id": "ORD-1004", "customer_id": "CUST-003", "amount": -10.00},  # Ошибка
-        {"order_id": "ORD-1005", "customer_id": "CUST-004", "amount": 200.00}
+        {"order_id": "ORD-1004", "customer_id": "CUST-003", "amount": -10.00},  # Ошибка: отрицательная сумма
+        {"order_id": "ORD-1005", "customer_id": "CUST-004", "amount": 200.00},
+        # Тест ошибок:
+        {"order_id": "ORD-1006", "customer_id": "CUST-005"},  # Ошибка: нет amount
+        {"order_id": "ORD-1007", "amount": 50.00},  # Ошибка: нет customer_id
+        {"customer_id": "CUST-006", "amount": 60.00},  # Ошибка: нет order_id
     ]
 
     for order in test_orders:
         message = {
-            "order_id": order["order_id"],
-            "customer_id": order["customer_id"],
-            "amount": order["amount"],
+            "order_id": order.get("order_id"),  # Может быть None
+            "customer_id": order.get("customer_id"),
+            "amount": order.get("amount"),
             "timestamp": int(time.time()),
             "correlation_id": str(uuid.uuid4()),
             "source": "web-api"
         }
 
         try:
-            logger.info(f"📤 Sending order {order['order_id']} for customer {order['customer_id']}")
-            future = producer.send(MAIN_TOPIC, key=order["customer_id"], value=message)
+            logger.info(
+                f"📤 Sending order {order.get('order_id', 'NO_ORDER_ID')} for customer {order.get('customer_id', 'NO_CUSTOMER_ID')}")
+            future = producer.send(MAIN_TOPIC, key=order.get("customer_id", "unknown"), value=message)
             record_metadata = future.get(timeout=10)
             logger.success(
-                f"✅ Order {order['order_id']} sent to partition {record_metadata.partition}, "
+                f"✅ Order {order.get('order_id', 'NO_ORDER_ID')} sent to partition {record_metadata.partition}, "
                 f"offset {record_metadata.offset}"
             )
         except Exception as e:
-            logger.error(f"❌ Failed to send order {order['order_id']}: {e}")
+            logger.error(f"❌ Failed to send order {order.get('order_id', 'NO_ORDER_ID')}: {e}")
 
     producer.flush()
     logger.info("🏁 Producer finished")
@@ -71,65 +76,103 @@ elif MODE == 'consumer':
         group_id=CONSUMER_GROUP,
         auto_offset_reset='earliest',
         enable_auto_commit=False,
-        value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+        # Без десериализации — будем проверять JSON вручную
+        value_deserializer=None,
         max_poll_records=10
     )
 
 
-    def process_message(message):
+    def safe_json_decode(data: bytes) -> dict:
+        """Безопасное декодирование JSON"""
+        try:
+            return json.loads(data.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Invalid JSON in message: {data.decode('utf-8', errors='replace')[:100]}... | Error: {e}")
+            return {"_invalid_json": True, "raw_data": data.decode('utf-8', errors='replace'), "error": str(e)}
+
+
+    def validate_message(message_dict: dict) -> tuple[bool, str]:
+        """Валидация сообщения"""
+        if "_invalid_json" in message_dict:
+            return False, "Invalid JSON format"
+
+        required_fields = ['order_id', 'customer_id', 'amount']
+        missing_fields = [field for field in required_fields if
+                          field not in message_dict or message_dict[field] is None]
+
+        if missing_fields:
+            return False, f"Missing required fields: {missing_fields}"
+
+        if not isinstance(message_dict['amount'], (int, float)):
+            return False, "Amount must be a number"
+
+        if message_dict['amount'] <= 0:
+            return False, f"Invalid amount: {message_dict['amount']} (must be > 0)"
+
+        return True, ""
+
+
+    def process_message(message_value_bytes):
         """Обработка сообщения"""
         try:
-            required_fields = ['order_id', 'customer_id', 'amount']
-            if not all(field in message for field in required_fields):
-                raise ValueError("Missing required fields")
+            # Декодируем JSON
+            message_dict = safe_json_decode(message_value_bytes)
 
-            if message['amount'] <= 0:
-                raise ValueError("Invalid amount")
+            # Проверяем валидность
+            is_valid, error_msg = validate_message(message_dict)
+            if not is_valid:
+                logger.error(f"❌ Validation failed: {error_msg} | Message: {message_dict}")
+                raise ValueError(error_msg)
 
-            logger.info(f"📝 Processing order {message['order_id']} for ${message['amount']}")
+            # Обработка корректного сообщения
+            logger.info(f"📝 Processing order {message_dict['order_id']} for ${message_dict['amount']}")
 
             # Имитация обработки
             time.sleep(0.1)
 
             # ПРОДЮСЕР ВНУТРИ КОНСЬЮМЕРА (Event-driven)
-            if message['amount'] > 100:  # Отправить в платежную систему
+            if message_dict['amount'] > 100:  # Отправить в платежную систему
                 payment_producer = KafkaProducer(
                     bootstrap_servers=BOOTSTRAP_SERVERS,
                     value_serializer=lambda v: json.dumps(v).encode('utf-8')
                 )
 
                 payment_event = {
-                    "order_id": message['order_id'],
-                    "amount": message['amount'],
+                    "order_id": message_dict['order_id'],
+                    "amount": message_dict['amount'],
                     "payment_status": "pending",
                     "processed_at": int(time.time())
                 }
 
                 payment_producer.send('payment.process', value=payment_event)
                 payment_producer.flush()
-                logger.info(f"💳 Payment event sent for order {message['order_id']}")
+                logger.info(f"💳 Payment event sent for order {message_dict['order_id']}")
                 payment_producer.close()
 
             return True
 
         except Exception as e:
-            logger.error(f"💥 Processing error for {message.get('order_id', 'unknown')}: {e}")
+            logger.error(f"💥 Processing error: {e}")
             return False
 
 
-    def send_to_dlq(message, error):
+    def send_to_dlq(original_message_bytes, error):
         """Отправка в DLQ"""
         try:
+            original_dict = safe_json_decode(original_message_bytes)
+
             dlq_producer = KafkaProducer(
                 bootstrap_servers=BOOTSTRAP_SERVERS,
                 value_serializer=lambda v: json.dumps(v).encode('utf-8')
             )
 
             dlq_message = {
-                "original_message": message,
+                "original_message": original_dict,
                 "error": str(error),
                 "timestamp": int(time.time()),
-                "retry_count": 0
+                "retry_count": 0,
+                "source_partition": getattr(dlq_message, 'partition', 'unknown'),  # Если есть
+                "source_offset": getattr(dlq_message, 'offset', 'unknown')  # Если есть
             }
 
             dlq_producer.send(DLQ_TOPIC, value=dlq_message)
@@ -152,7 +195,7 @@ elif MODE == 'consumer':
                 consumer.commit()
                 logger.success(f"✅ Committed offset {message.offset}")
             else:
-                send_to_dlq(message.value, "Processing failed")
+                send_to_dlq(message.value, "Validation or processing failed")
                 # Не коммитим → сообщение будет обработано снова
 
     except KeyboardInterrupt:

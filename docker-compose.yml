@@ -47,3 +47,30 @@ services:
     depends_on:
       - kafka
     command: ["python", "producer_consumer.py"]
+
+  # Сервис тестового продюсера - разные сценарии
+  test-producer:
+    build: .
+    environment:
+      - KAFKA_BOOTSTRAP=kafka:9092
+    depends_on:
+      - kafka
+    command: ["python", "test_producer.py"]
+
+  # Сервис анализа партиций
+  partition-analyzer:
+    build: .
+    environment:
+      - KAFKA_BOOTSTRAP=kafka:9092
+    depends_on:
+      - kafka
+    command: ["python", "partition_analyzer.py"]
+
+  # Сервис проверки DLQ
+  dlq-checker:
+    build: .
+    environment:
+      - KAFKA_BOOTSTRAP=kafka:9092
+    depends_on:
+      - kafka
+    command: ["python", "dlq_checker.py"]
